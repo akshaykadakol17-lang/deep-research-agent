@@ -1,97 +1,93 @@
 # Deep Research Agent with Memory Constraints
 
-An AI agent that answers complex, multi-part research questions while operating under strict memory and cost constraints. Built for the Binox 2026 Graduate FDE Assessment (G3).
+A research agent that answers complex, multi-part questions while operating under strict memory and cost constraints. Built as part of the Binox 2026 Graduate FDE Assessment (G3).
 
-## Demo
+## Why I built this
 
-**Query:** Compare AI regulations in the EU, United States, and China — what are the key differences in approach, enforcement, and impact on innovation?
+I chose G3 because it focuses more on system design and reasoning rather than building something like a voice agent or a social scraper. I liked that it allowed me to design the architecture myself, especially around how memory works and how to manage constraints like tokens and cost. It felt more aligned with the kind of engineering decisions you'd make in real-world AI systems.
 
-**Result:** Agent decomposed into 5 sub-questions, researched each with growing memory context, and synthesized a comprehensive answer in 3 steps — using only $0.00085 of the $0.10 session budget.
+## How it works
 
-## Architecture
+The agent takes a complex research question and breaks it into 3–5 focused sub-questions. Each sub-question is researched individually using context retrieved from memory, then all answers are synthesized into a final response.
 ```
 User query
     ↓
-Query Decomposer        → breaks into 3–5 focused sub-questions
+Query Decomposer     → breaks into 3–5 sub-questions
     ↓
-Token Budget Check      → enforces max 3,000 tokens of context per sub-query
+Token Budget Check   → max 3,000 tokens of context per sub-query
     ↓
 Memory Layer
-  ├── Vector Store       → Chroma (semantic retrieval of past answers)
-  ├── Episodic Buffer    → last 5 results kept in working memory
-  └── Summary Cache      → compressed context for long sessions
+  ├── Episodic Buffer    → last 5 Q&A pairs (short-term memory)
+  └── Vector Store       → Chroma semantic search (long-term memory)
     ↓
-LLM (Llama 3.2 via Ollama)  → answers each sub-question with retrieved context
+LLM (Llama 3.2 via Ollama)
     ↓
-Synthesizer             → combines all answers into final response
+Synthesizer          → combines all answers into final response
     ↓
-Budget Report           → tokens used, cost, session limit status
+Budget Report        → tokens used, cost, session limit status
 ```
 
-## Constraints (Self-Defined)
+## Constraints
 
-| Constraint | Limit | Enforced in |
+| Constraint | Limit | Where enforced |
 |---|---|---|
 | Max context tokens per sub-query | 3,000 tokens | `budget.py` |
 | Max cost per session | $0.10 | `budget.py` |
 | Episodic buffer size | 5 items | `memory.py` |
 
-If context exceeds 3,000 tokens, it is automatically trimmed to episodic-only before the LLM call. If session cost exceeds $0.10, remaining sub-queries are skipped with a logged warning.
+If context exceeds 3,000 tokens it is trimmed automatically before the LLM call. If session cost exceeds $0.10, remaining sub-queries are skipped with a logged warning.
 
-## Memory Strategy
+## Memory design
 
-The agent uses a **three-layer hybrid memory architecture**:
+The episodic buffer stores the most recent question and answer pairs so the agent remembers what it just discovered. When the next sub-question is processed, the system reuses those recent results as context instead of starting from scratch. It acts like short-term memory for the agent.
 
-1. **Episodic buffer** — a fixed-size deque (max 5 items) holding the most recent sub-question/answer pairs. Fast, always available, no retrieval needed.
-2. **Vector store (Chroma)** — all answers are embedded and stored. Semantic similarity search retrieves the most relevant past findings for each new sub-question.
-3. **Token budget gate** — before every LLM call, total context is counted. If it exceeds 3,000 tokens, only the episodic buffer is used (truncated to 1,500 chars). This ensures the constraint is never silently violated.
+Alongside the episodic buffer, all answers are stored in a Chroma vector store. This allows the agent to retrieve semantically relevant past findings even if they weren't the most recent — acting as longer-term memory.
 
-## Project Structure
+## Why Ollama
+
+I used Ollama because it runs the model locally, which avoids API quota issues and keeps the project completely reproducible without needing external keys or credits. Since the goal of the task was to demonstrate the architecture and memory strategy, using a local model made development easier and ensures anyone reviewing the project can run it without setup friction.
+
+## Project structure
 ```
 deep-research-agent/
 ├── main.py           # entry point
-├── decomposer.py     # query decomposition
+├── decomposer.py     # breaks query into sub-questions
 ├── memory.py         # episodic buffer + Chroma vector store
-├── researcher.py     # per-sub-question LLM calls with memory
-├── synthesizer.py    # final answer synthesis
+├── researcher.py     # LLM calls with memory context per sub-question
+├── synthesizer.py    # combines answers into final response
 ├── budget.py         # token counting + cost tracking
 ├── requirements.txt
 ├── README.md
-└── evaluation.md     # architecture trade-off analysis
+└── evaluation.md
 ```
 
 ## Setup
 
-**Requirements:** Python 3.10+, [Ollama](https://ollama.com)
+Requirements: Python 3.10+, [Ollama](https://ollama.com)
 ```bash
 # 1. Install Ollama and pull the model
 brew install ollama
 ollama pull llama3.2
-ollama serve   # run in a separate terminal tab
+ollama serve    # run in a separate terminal tab
 
-# 2. Clone and install dependencies
-git clone https://github.com/YOUR_USERNAME/deep-research-agent
-cd deep-research-agent
+# 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Run the agent
+# 3. Run
 python main.py
 ```
 
-No API keys required. Runs entirely locally.
+No API keys needed. Runs entirely locally.
 
-## Example Output
+## Example output
 ```
 [Step 1] Decomposing query into sub-questions...
 [Decomposer] 5 sub-questions generated
-  1. How do EU, US, and Chinese AI regulations differ in addressing job displacement?
-  2. What is the role of government oversight in enforcing AI regulations?
-  ...
 
 [Step 2] Researching each sub-question...
 [Budget] sub-question 1: 256 tokens | $0.00003 | Session total: $0.00003
 [Budget] sub-question 2: 728 tokens | $0.00009 | Session total: $0.00012
-  ...
+[Budget] sub-question 3: 1181 tokens | $0.00015 | Session total: $0.00027
 
 [Step 3] Synthesizing final answer...
 
@@ -99,25 +95,21 @@ No API keys required. Runs entirely locally.
 Session budget OK (limit: $0.10)
 ```
 
-## Self-Assessment
+Notice how token counts grow with each sub-query — that's the memory working, pulling in more context as the session progresses.
 
-**What works well:**
-- Memory context visibly grows between sub-queries (token counts increase each step), confirming RAG is active
-- Budget enforcement is real — sub-queries are skipped if limit is hit, not just warned
-- Fully local, zero API cost, reproducible on any Mac with Ollama
+## What I would improve
 
-**What I would improve with more time:**
-- Add a summarization cascade for very long sessions (currently just truncates)
-- Expose a simple CLI interface for custom queries
-- Add evaluation metrics (answer relevance scoring per sub-question)
-- Persist vector store across sessions for cross-session memory
+- Add a summarization layer so older memory gets compressed instead of dropped when the buffer fills up
+- Add a simple interface where users can enter their own queries instead of it being hardcoded
+- Add evaluation metrics to score each sub-answer for relevance and flag low-confidence results
+- Persist the vector store across sessions so memory carries over between runs
 
-## Tech Stack
+## Tech stack
 
-| Component | Tool | Why |
+| Component | Tool | Reason |
 |---|---|---|
-| LLM | Llama 3.2 via Ollama | Free, local, no quota limits |
+| LLM | Llama 3.2 via Ollama | Local, free, no quota limits, fully reproducible |
 | Vector store | Chroma | Lightweight, no server needed |
 | Embeddings | all-MiniLM-L6-v2 | Fast, good semantic quality |
-| Token counting | tiktoken | Accurate, same tokenizer as GPT-4 |
-| Memory | Custom Python (deque) | Simple, inspectable, no overhead |
+| Token counting | tiktoken | Accurate token counting |
+| Memory | Custom Python deque | Simple, inspectable, no overhead |
